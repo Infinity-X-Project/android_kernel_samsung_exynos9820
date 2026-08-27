@@ -88,6 +88,7 @@
 #define AUDIT_INITIALIZED	1
 static int	audit_initialized;
 
+/* Default state when kernel boots without any parameters. */
 // [ SEC_SELINUX_PORTING_COMMON
 u32		audit_enabled = AUDIT_ON;
 u32		audit_ever_enabled = !!AUDIT_ON;

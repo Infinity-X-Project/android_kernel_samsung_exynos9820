@@ -830,7 +830,7 @@ out:
 	return ret;
 }
 
-// KNOX NPA - END
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA }
 
 bool sk_mc_loop(struct sock *sk)
 {
@@ -2998,7 +2998,7 @@ static void sock_def_error_report(struct sock *sk)
 	rcu_read_unlock();
 }
 
-static void sock_def_readable(struct sock *sk)
+void sock_def_readable(struct sock *sk)
 {
 	struct socket_wq *wq;
 

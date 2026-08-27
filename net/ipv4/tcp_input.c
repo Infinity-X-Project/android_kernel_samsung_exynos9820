@@ -80,14 +80,6 @@
 #include <linux/static_key.h>
 #include <linux/jump_label_ratelimit.h>
 #include <net/busy_poll.h>
-#ifdef CONFIG_NETPM
-#include <linux/inetdevice.h>
-#endif
-#ifdef CONFIG_MPTCP
-#include <net/mptcp.h>
-#include <net/mptcp_v4.h>
-#include <net/mptcp_v6.h>
-#endif
 
 int sysctl_tcp_fack __read_mostly;
 int sysctl_tcp_max_reordering __read_mostly = 300;
@@ -227,142 +219,6 @@ static void bpf_skops_parse_hdr(struct sock *sk, struct sk_buff *skb)
 static void bpf_skops_established(struct sock *sk, int bpf_op,
 				  struct sk_buff *skb)
 {
-}
-#endif
-
-#ifdef CONFIG_NETPM
-static int netpm_int_log2(u32);
-static int netpm_pow(int, int);
-static int netpm_piecelinear_logbdp(struct tcp_sock *);
-
-#define NETPM_DEF_ENABLE 1
-#define NETPM_DEF_UB sysctl_tcp_rmem[2]
-#define NETPM_DEF_LB 2560000
-#define NETPM_DEF_SRTT_SCALE 10 // it should be equal or larger than 1
-#define NETPM_DEF_PA 600000
-#define NETPM_DEF_PB 17
-#define NETPM_DEF_RTT_MIN_LB 20000
-#define NETPM_DEF_MP 150
-#define NETPM_DEF_GAIN 250
-#define NETPM_RTT_MIN_INITIAL_VAL 86400000
-
-static const s8 NetpmLogTable[256] = {
-	-1, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
-	4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-	5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-	5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7
-};
-
-#ifdef SAMSUNG_NETPM_DEBUG
-#define netpm_debug(format, ...) pr_debug("<netpm> "format, __VA_ARGS__)
-#else
-#define netpm_debug(format, ...) do {} while (0)
-#endif
-
-static inline bool netpm(struct tcp_sock *tp)
-{
-	return NETPM_DEF_ENABLE && (sysctl_tcp_netpm[1] == 0x04) &&
-		(tp->netpm_netif == 1);
-}
-
-static inline int netpm_rmem_max(struct tcp_sock *tp)
-{
-	if (netpm(tp)) {
-		if (sysctl_tcp_netpm[2] == 0x01)
-			return tp->netpm_tcp_rmem_max;
-		else
-			return sysctl_tcp_rmem[1];
-	}
-
-	return sysctl_tcp_rmem[2];
-}
-
-static inline u32 netpm_rtt_min(struct tcp_sock *tp)
-{
-	if (tp->netpm_rtt_min_us >> 3 > NETPM_DEF_RTT_MIN_LB)
-		return tp->netpm_rtt_min_us >> 3;
-	else
-		return NETPM_DEF_RTT_MIN_LB;
-}
-
-static struct net_device *netpm_dev_find(struct sock *sk)
-{
-	struct net_device *dev = NULL;
-
-	if (!sk)
-		goto outdev_out;
-
-	if (sk->sk_family == AF_INET) {
-		struct rtable *rt = (struct rtable *)__sk_dst_check(sk, 0);
-
-		if (rt)
-			dev = rt->dst.dev;
-
-		if (!dev) {
-			struct inet_sock *inet = inet_sk(sk);
-
-			dev = __ip_dev_find(sock_net(sk), inet->inet_saddr, false);
-		}
-	} else if (sk->sk_family == AF_INET6) {
-		struct ipv6_pinfo *np = inet6_sk(sk);
-		struct rtable *rt = (struct rtable *)__sk_dst_check(sk,
-				np->dst_cookie);
-
-		if (rt)
-			dev = rt->dst.dev;
-
-		if (!dev)
-			dev = ip6_dev_find(sock_net(sk), &np->saddr);
-	}
-outdev_out:
-	return dev;
-}
-
-static void netpm_init_buffer_space(struct sock *sk)
-{
-	struct tcp_sock *tp = tcp_sk(sk);
-	struct net_device *dev_out = netpm_dev_find(sk);
-
-	if (!NETPM_DEF_ENABLE || !dev_out)
-		return;
-
-	if (dev_out->netpm_use) {
-		tp->netpm_netif = 1;
-
-		/* Initialization for NETPM */
-		tp->netpm_rtt_min_us = NETPM_RTT_MIN_INITIAL_VAL;
-		tp->netpm_max_tput = 0;
-		tp->netpm_srtt_us = 0;
-		tp->netpm_rttvar_us = 0;
-		tp->netpm_cwnd_est = 0;
-		tp->netpm_tcp_rmem_max = sysctl_tcp_rmem[2];
-		tp->netpm_rbuf_flag = 0;
-		tp->netpm_rmem_max_curbdp = -1;
-	} else {
-		tp->netpm_netif = 0;
-	}
-}
-
-static inline u32 netpm_rtt_avg(struct tcp_sock *tp)
-{
-	return tp->netpm_srtt_us >> NETPM_DEF_SRTT_SCALE;
-}
-
-static inline u32 netpm_rttvar_avg(struct tcp_sock *tp)
-{
-	return tp->netpm_rttvar_us >> (NETPM_DEF_SRTT_SCALE - 1);
 }
 #endif
 
@@ -4302,17 +4158,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 				    &sack_state);
 
 	tcp_rack_update_reo_wnd(sk, &rs);
-#ifdef CONFIG_MPTCP
-	if (mptcp(tp)) {
-		if (mptcp_fallback_infinite(sk, flag)) {
-			pr_err("%s resetting flow\n", __func__);
-			mptcp_send_reset(sk);
-			goto invalid_ack;
-		}
 
-		mptcp_clean_rtx_infinite(skb, sk);
-	}
-#endif
 	if (tp->tlp_high_seq)
 		tcp_process_tlp_ack(sk, ack, flag);
 
@@ -6256,11 +6102,6 @@ syn_challenge:
 	}
 
 	bpf_skops_parse_hdr(sk, skb);
-#ifdef CONFIG_MPTCP
-	/* If valid: post process the received MPTCP options. */
-	if (mptcp(tp) && mptcp_handle_options(sk, th, skb))
-		goto discard;
-#endif
 	return true;
 
 discard:
@@ -6501,9 +6342,7 @@ void tcp_init_transfer(struct sock *sk, int bpf_op, struct sk_buff *skb)
 
 	bpf_skops_established(sk, bpf_op, skb);
 	tcp_init_congestion_control(sk);
-#ifndef CONFIG_MPTCP
 	tcp_init_buffer_space(sk);
-#endif
 }
 
 void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
@@ -6526,10 +6365,6 @@ void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 	 * packet.
 	 */
 	tp->lsndtime = tcp_jiffies32;
-
-#ifdef CONFIG_MPTCP
-	tp->ops->init_buffer_space(sk);
-#endif
 
 	if (sock_flag(sk, SOCK_KEEPOPEN))
 		inet_csk_reset_keepalive_timer(sk, keepalive_time_when(tp));
@@ -7080,10 +6915,6 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 					  skb);
 			tp->copied_seq = tp->rcv_nxt;
 
-#ifdef CONFIG_MPTCP
-			tp->ops->init_buffer_space(sk);
-#endif
-
 		}
 		smp_mb();
 		tcp_set_state(sk, TCP_ESTABLISHED);
@@ -7100,12 +6931,8 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		tp->snd_wnd = ntohs(th->window) << tp->rx_opt.snd_wscale;
 		tcp_init_wl(tp, TCP_SKB_CB(skb)->seq);
 
-		if (tp->rx_opt.tstamp_ok)
-			tp->advmss -= TCPOLEN_TSTAMP_ALIGNED;
-#ifdef CONFIG_MPTCP
-		if (mptcp(tp))
-			tp->advmss -= MPTCP_SUB_LEN_DSM_ALIGN;
-#endif
+	     if (tp->rx_opt.tstamp_ok)
+		 tp->advmss -= TCPOLEN_TSTAMP_ALIGNED;
 
 		if (!inet_csk(sk)->icsk_ca_ops->cong_control)
 			tcp_update_pacing_rate(sk);

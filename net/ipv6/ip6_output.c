@@ -610,8 +610,8 @@ int ip6_forward(struct sk_buff *skb)
 		       ip6_forward_finish);
 
 error:
-__IP6_INC_STATS(net, idev, IPSTATS_MIB_INADDRERRORS);
-DROPDUMP_QUEUE_SKB(skb, NET_DROPDUMP_IPSTATS_MIB_INADDRERRORS5);
+	__IP6_INC_STATS(net, idev, IPSTATS_MIB_INADDRERRORS);
+	DROPDUMP_QUEUE_SKB(skb, NET_DROPDUMP_IPSTATS_MIB_INADDRERRORS5);
 drop:
 	kfree_skb(skb);
 	return -EINVAL;
