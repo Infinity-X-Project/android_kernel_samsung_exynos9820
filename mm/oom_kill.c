@@ -392,7 +392,7 @@ void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 	swap_comp_nrpages = get_swap_comp_pool_nrpages();
 	pr_info("[ pid ]   uid  tgid total_vm total_rss (   rss     swap  ) pgtables_bytes swapents oom_score_adj name\n");
 #else
-	pr_info("[ pid ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name\n");
+	pr_info("[ pid ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name\n";
 #endif
 	rcu_read_lock();
 	for_each_process(p) {

@@ -847,6 +847,9 @@ enum sock_flags {
 	SOCK_SELECT_ERR_QUEUE, /* Wake select on error queue */
 	SOCK_RCU_FREE, /* wait rcu grace period in sk_destruct() */
 	SOCK_TXTIME,
+#ifdef CONFIG_MPTCP
+	SOCK_MPTCP, /* MPTCP set on this socket */
+#endif
 };
 
 #define SK_FLAGS_TIMESTAMP ((1UL << SOCK_TIMESTAMP) | (1UL << SOCK_TIMESTAMPING_RX_SOFTWARE))
@@ -2647,7 +2650,5 @@ extern __u32 sysctl_rmem_default;
 #define SKB_FRAG_PAGE_ORDER	get_order(32768)
 
 int sock_bindtoindex(struct sock *sk, int ifindex, bool lock_sk);
-
-void sock_def_readable(struct sock *sk);
 
 #endif	/* _SOCK_H */

@@ -14,6 +14,7 @@ obj-$(CONFIG_UH)              += uh_fault_handler.o
 
 obj-$(CONFIG_ANDROID_SAR_RAMDISK) += sar_ramdisk/
 
+
 obj-y                          += init_task.o
 
 mounts-y			:= do_mounts.o

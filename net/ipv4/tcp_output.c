@@ -87,8 +87,10 @@ void tcp_mstamp_refresh(struct tcp_sock *tp)
 		tp->tcp_mstamp = val;
 }
 
+#ifndef CONFIG_MPTCP
 static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 		    int push_one, gfp_t gfp);
+#endif
 
 /* Account for new data that has been sent to the network. */
 #ifndef CONFIG_MPTCP
@@ -756,6 +758,10 @@ static void tcp_options_write(__be32 *ptr, struct tcp_sock *tp,
 		ptr += (len + 3) >> 2;
 	}
 
+#ifdef CONFIG_MPTCP
+	if (unlikely(OPTION_MPTCP & opts->options))
+		mptcp_options_write(ptr, tp, opts, skb);
+#endif
 	smc_options_write(ptr, &options);
 }
 
@@ -928,6 +934,11 @@ static unsigned int tcp_synack_options(const struct sock *sk,
 			remaining -= need;
 		}
 	}
+
+#ifdef CONFIG_MPTCP
+	if (ireq->saw_mpc)
+		mptcp_synack_options(req, opts, &remaining);
+#endif
 
 	smc_set_option_cond(tcp_sk(sk), ireq, opts, &remaining);
 

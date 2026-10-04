@@ -946,11 +946,6 @@ void __noreturn do_exit(long code)
 	exit_thread(tsk);
 	if (group_dead)
 		exit_umh(tsk);
-		
-#ifdef CONFIG_FAST_TRACK
-	if(tsk->se.ftt_mark)
-		fttstat.ftt_cnt--;
-#endif
 
 	/*
 	 * Flush inherited counters to the parent - before the parent

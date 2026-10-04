@@ -105,6 +105,7 @@ static struct sk_buff *xfrm4_mode_tunnel_gso_segment(struct xfrm_state *x,
 {
 	__skb_push(skb, skb->mac_len);
 	return skb_mac_gso_segment(skb, features);
+
 }
 
 static void xfrm4_mode_tunnel_xmit(struct xfrm_state *x, struct sk_buff *skb)
