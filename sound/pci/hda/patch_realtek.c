@@ -3312,18 +3312,20 @@ static void alc_default_init(struct hda_codec *codec)
 
 	hp_pin_sense = snd_hda_jack_detect(codec, hp_pin);
 
-	if (hp_pin_sense) {
+	if (hp_pin_sense)
 		msleep(2);
 
-		snd_hda_codec_write(codec, hp_pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+	snd_hda_codec_write(codec, hp_pin, 0,
+			    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
 
-		msleep(75);
+	if (hp_pin_sense)
+		msleep(85);
 
-		snd_hda_codec_write(codec, hp_pin, 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE);
-		msleep(75);
-	}
+	snd_hda_codec_write(codec, hp_pin, 0,
+			    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+
+	if (hp_pin_sense)
+		msleep(100);
 }
 
 static void alc_default_shutup(struct hda_codec *codec)
@@ -3339,19 +3341,21 @@ static void alc_default_shutup(struct hda_codec *codec)
 
 	hp_pin_sense = snd_hda_jack_detect(codec, hp_pin);
 
-	if (hp_pin_sense) {
+	if (hp_pin_sense)
 		msleep(2);
 
-		snd_hda_codec_write(codec, hp_pin, 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
+	snd_hda_codec_write(codec, hp_pin, 0,
+			    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
 
-		msleep(75);
+	if (hp_pin_sense)
+		msleep(85);
 
-		snd_hda_codec_write(codec, hp_pin, 0,
-					    AC_VERB_SET_PIN_WIDGET_CONTROL, 0x0);
+	snd_hda_codec_write(codec, hp_pin, 0,
+			    AC_VERB_SET_PIN_WIDGET_CONTROL, 0x0);
 
-		msleep(75);
-	}
+	if (hp_pin_sense)
+		msleep(100);
+
 	alc_auto_setup_eapd(codec, false);
 	snd_hda_shutup_pins(codec);
 }

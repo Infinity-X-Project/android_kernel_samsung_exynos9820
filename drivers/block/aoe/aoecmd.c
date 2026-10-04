@@ -362,7 +362,6 @@ ata_rw_frameinit(struct frame *f)
 	}
 
 	ah->cmdstat = ATA_CMD_PIO_READ | writebit | extbit;
-	dev_hold(t->ifp->nd);
 	skb->dev = t->ifp->nd;
 }
 
@@ -404,8 +403,6 @@ aoecmd_ata_rw(struct aoedev *d)
 		__skb_queue_head_init(&queue);
 		__skb_queue_tail(&queue, skb);
 		aoenet_xmit(&queue);
-	} else {
-		dev_put(f->t->ifp->nd);
 	}
 	return 1;
 }
@@ -488,13 +485,10 @@ resend(struct aoedev *d, struct frame *f)
 	memcpy(h->dst, t->addr, sizeof h->dst);
 	memcpy(h->src, t->ifp->nd->dev_addr, sizeof h->src);
 
-	dev_hold(t->ifp->nd);
 	skb->dev = t->ifp->nd;
 	skb = skb_clone(skb, GFP_ATOMIC);
-	if (skb == NULL) {
-		dev_put(t->ifp->nd);
+	if (skb == NULL)
 		return;
-	}
 	do_gettimeofday(&f->sent);
 	f->sent_jiffs = (u32) jiffies;
 	__skb_queue_head_init(&queue);
@@ -644,8 +638,6 @@ probe(struct aoetgt *t)
 		__skb_queue_head_init(&queue);
 		__skb_queue_tail(&queue, skb);
 		aoenet_xmit(&queue);
-	} else {
-		dev_put(f->t->ifp->nd);
 	}
 }
 
@@ -1433,7 +1425,6 @@ aoecmd_ata_id(struct aoedev *d)
 	ah->cmdstat = ATA_CMD_ID_ATA;
 	ah->lba3 = 0xa0;
 
-	dev_hold(t->ifp->nd);
 	skb->dev = t->ifp->nd;
 
 	d->rttavg = RTTAVG_INIT;
@@ -1445,8 +1436,6 @@ aoecmd_ata_id(struct aoedev *d)
 		do_gettimeofday(&f->sent);
 		f->sent_jiffs = (u32) jiffies;
 	}
-	else
-		dev_put(t->ifp->nd);
 
 	return skb;
 }

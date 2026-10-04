@@ -13,7 +13,6 @@
 #include <linux/wireless.h>
 #include <linux/nl80211.h>
 #include <linux/etherdevice.h>
-#include <linux/overflow.h>
 #include <net/arp.h>
 #include <net/cfg80211.h>
 #include <net/cfg80211-wext.h>
@@ -1410,8 +1409,8 @@ int cfg80211_wext_siwscan(struct net_device *dev,
 		n_channels = ieee80211_get_num_supported_channels(wiphy);
 	}
 
-	creq = kzalloc(struct_size(creq, channels, n_channels) +
-		       sizeof(struct cfg80211_ssid),
+	creq = kzalloc(sizeof(*creq) + sizeof(struct cfg80211_ssid) +
+		       n_channels * sizeof(void *),
 		       GFP_ATOMIC);
 	if (!creq) {
 		err = -ENOMEM;
@@ -1421,7 +1420,7 @@ int cfg80211_wext_siwscan(struct net_device *dev,
 	creq->wiphy = wiphy;
 	creq->wdev = dev->ieee80211_ptr;
 	/* SSIDs come after channels */
-	creq->ssids = (void *)creq + struct_size(creq, channels, n_channels);
+	creq->ssids = (void *)&creq->channels[n_channels];
 	creq->n_channels = n_channels;
 	creq->n_ssids = 1;
 	creq->scan_start = jiffies;
