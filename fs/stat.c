@@ -439,11 +439,6 @@ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 
 	if (!error)
 		error = cp_new_stat(&stat, statbuf);
-		
-		#ifdef CONFIG_KSU
-                if (!error)
-                ksu_handle_newfstat_ret(&fd, &statbuf);  /* add the KSU lines to init.rc's reported size */
-                #endif
 
 	return error;
 }
