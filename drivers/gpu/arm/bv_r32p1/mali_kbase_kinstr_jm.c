@@ -49,6 +49,14 @@
 
 #include <linux/build_bug.h>
 
+/*
+ * The __poll_t type has been backported to this 4.14 kernel,
+ * ignore this check.
+ */
+//#if KERNEL_VERSION(4, 16, 0) >= LINUX_VERSION_CODE
+//typedef unsigned int __poll_t;
+//#endif
+
 #ifndef ENOTSUP
 #define ENOTSUP EOPNOTSUPP
 #endif
