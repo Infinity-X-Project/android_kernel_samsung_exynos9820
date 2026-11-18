@@ -47,7 +47,7 @@
 #include <linux/uaccess.h>
 #include <linux/atomic.h>
 #include <asm/vgtod.h>
-#include <asm/sys_ia32.h>
+#include <asm/ia32.h>
 
 #define AA(__x)		((unsigned long)(__x))
 
@@ -55,7 +55,8 @@
 COMPAT_SYSCALL_DEFINE3(x86_truncate64, const char __user *, filename,
 		       unsigned long, offset_low, unsigned long, offset_high)
 {
-       return sys_truncate(filename, ((loff_t) offset_high << 32) | offset_low);
+	return ksys_truncate(filename,
+			    ((loff_t) offset_high << 32) | offset_low);
 }
 
 COMPAT_SYSCALL_DEFINE3(x86_ftruncate64, unsigned int, fd,
@@ -165,7 +166,7 @@ COMPAT_SYSCALL_DEFINE1(x86_mmap, struct mmap_arg_struct32 __user *, arg)
 	if (a.offset & ~PAGE_MASK)
 		return -EINVAL;
 
-	return sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
+	return ksys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
 			       a.offset>>PAGE_SHIFT);
 }
 
@@ -173,15 +174,15 @@ COMPAT_SYSCALL_DEFINE1(x86_mmap, struct mmap_arg_struct32 __user *, arg)
 COMPAT_SYSCALL_DEFINE5(x86_pread, unsigned int, fd, char __user *, ubuf,
 		       u32, count, u32, poslo, u32, poshi)
 {
-	return sys_pread64(fd, ubuf, count,
-			 ((loff_t)AA(poshi) << 32) | AA(poslo));
+	return ksys_pread64(fd, ubuf, count,
+			    ((loff_t)AA(poshi) << 32) | AA(poslo));
 }
 
 COMPAT_SYSCALL_DEFINE5(x86_pwrite, unsigned int, fd, const char __user *, ubuf,
 		       u32, count, u32, poslo, u32, poshi)
 {
-	return sys_pwrite64(fd, ubuf, count,
-			  ((loff_t)AA(poshi) << 32) | AA(poslo));
+	return ksys_pwrite64(fd, ubuf, count,
+			     ((loff_t)AA(poshi) << 32) | AA(poslo));
 }
 
 
@@ -193,40 +194,63 @@ COMPAT_SYSCALL_DEFINE6(x86_fadvise64_64, int, fd, __u32, offset_low,
 		       __u32, offset_high, __u32, len_low, __u32, len_high,
 		       int, advice)
 {
-	return sys_fadvise64_64(fd,
-			       (((u64)offset_high)<<32) | offset_low,
-			       (((u64)len_high)<<32) | len_low,
-				advice);
+	return ksys_fadvise64_64(fd,
+				 (((u64)offset_high)<<32) | offset_low,
+				 (((u64)len_high)<<32) | len_low,
+				 advice);
 }
 
 COMPAT_SYSCALL_DEFINE4(x86_readahead, int, fd, unsigned int, off_lo,
 		       unsigned int, off_hi, size_t, count)
 {
-	return sys_readahead(fd, ((u64)off_hi << 32) | off_lo, count);
+	return ksys_readahead(fd, ((u64)off_hi << 32) | off_lo, count);
 }
 
 COMPAT_SYSCALL_DEFINE6(x86_sync_file_range, int, fd, unsigned int, off_low,
 		       unsigned int, off_hi, unsigned int, n_low,
 		       unsigned int, n_hi, int, flags)
 {
-	return sys_sync_file_range(fd,
-				   ((u64)off_hi << 32) | off_low,
-				   ((u64)n_hi << 32) | n_low, flags);
+	return ksys_sync_file_range(fd,
+				    ((u64)off_hi << 32) | off_low,
+				    ((u64)n_hi << 32) | n_low, flags);
 }
 
 COMPAT_SYSCALL_DEFINE5(x86_fadvise64, int, fd, unsigned int, offset_lo,
 		       unsigned int, offset_hi, size_t, len, int, advice)
 {
-	return sys_fadvise64_64(fd, ((u64)offset_hi << 32) | offset_lo,
-				len, advice);
+	return ksys_fadvise64_64(fd, ((u64)offset_hi << 32) | offset_lo,
+				 len, advice);
 }
 
 COMPAT_SYSCALL_DEFINE6(x86_fallocate, int, fd, int, mode,
 		       unsigned int, offset_lo, unsigned int, offset_hi,
 		       unsigned int, len_lo, unsigned int, len_hi)
 {
-	return sys_fallocate(fd, mode, ((u64)offset_hi << 32) | offset_lo,
-			     ((u64)len_hi << 32) | len_lo);
+	return ksys_fallocate(fd, mode, ((u64)offset_hi << 32) | offset_lo,
+			      ((u64)len_hi << 32) | len_lo);
+}
+
+/*
+ * The 32-bit clone ABI is CONFIG_CLONE_BACKWARDS
+ */
+COMPAT_SYSCALL_DEFINE5(x86_clone, unsigned long, clone_flags,
+		       unsigned long, newsp, int __user *, parent_tidptr,
+		       unsigned long, tls_val, int __user *, child_tidptr)
+{
+	struct kernel_clone_args args = {
+		.flags		= (clone_flags & ~CSIGNAL),
+		.pidfd		= parent_tidptr,
+		.child_tid	= child_tidptr,
+		.parent_tid	= parent_tidptr,
+		.exit_signal	= (clone_flags & CSIGNAL),
+		.stack		= newsp,
+		.tls		= tls_val,
+	};
+
+	if (!legacy_clone_args_valid(&args))
+		return -EINVAL;
+
+	return _do_fork(&args);
 }
 
 /*

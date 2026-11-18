@@ -93,6 +93,7 @@ struct tcp_out_options {
 	u8	ws;		/* window scale, 0 to disable */
 	u8	num_sack_blocks;/* number of SACK blocks to include */
 	u8	hash_size;	/* bytes in hash_location */
+	u8	bpf_opt_len;	/* bytes of BPF header options */
 	u16	mss;		/* 0 to disable */
 	__u8	*hash_location;	/* temporary pointer, overloaded */
 	__u32	tsval, tsecr;	/* need to include OPTION_TS */

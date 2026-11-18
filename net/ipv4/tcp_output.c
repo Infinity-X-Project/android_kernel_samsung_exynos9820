@@ -493,6 +493,8 @@ static void smc_options_write(__be32 *ptr, u16 *options)
 #endif
 }
 
+
+
 #ifndef CONFIG_MPTCP
 struct tcp_out_options {
 	u16 options;		/* bit field of OPTION_* */

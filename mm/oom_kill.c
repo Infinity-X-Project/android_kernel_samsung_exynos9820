@@ -392,7 +392,7 @@ void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 	swap_comp_nrpages = get_swap_comp_pool_nrpages();
 	pr_info("[ pid ]   uid  tgid total_vm total_rss (   rss     swap  ) pgtables_bytes swapents oom_score_adj name\n");
 #else
-	pr_info("[ pid ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name\n";
+	pr_info("[ pid ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name\n");
 #endif
 	rcu_read_lock();
 	for_each_process(p) {
@@ -409,8 +409,9 @@ void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 			continue;
 		}
 #if defined(CONFIG_SWAP)
-		task_swap = get_mm_counter(task->mm, MM_SWAPENTS) *
-				swap_comp_nrpages / swap_orig_nrpages;
+		task_swap = swap_orig_nrpages ?
+			get_mm_counter(task->mm, MM_SWAPENTS) *
+			swap_comp_nrpages / swap_orig_nrpages : 0;
 		pr_info("[%5d] %5d %5d %8lu  %8lu (%8lu %8lu) %8ld %8lu         %5hd %s\n",
 #else
 		pr_info("[%5d] %5d %5d %8lu %8lu %8ld %8lu         %5hd %s\n",
@@ -958,7 +959,7 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	 * in order to prevent the OOM victim from depleting the memory
 	 * reserves from the user space under its control.
 	 */
-	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, true);
+	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, PIDTYPE_TGID);
 	mark_oom_victim(victim);
 	pr_err("Killed process %d (%s) total-vm:%lukB, anon-rss:%lukB, file-rss:%lukB, shmem-rss:%lukB\n",
 		task_pid_nr(victim), victim->comm, K(victim->mm->total_vm),
@@ -996,7 +997,7 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 		 */
 		if (unlikely(p->flags & PF_KTHREAD))
 			continue;
-		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, p, true);
+		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, p, PIDTYPE_TGID);
 	}
 	rcu_read_unlock();
 

@@ -183,7 +183,6 @@ extern bool initcall_debug;
  * and remove that completely, so the initcall sections have to be marked
  * as KEEP() in the linker script.
  */
-
 #ifdef CONFIG_HAVE_ARCH_PREL32_RELOCATIONS
 #define ___define_initcall(fn, id, __sec)			\
 	__ADDRESSABLE(fn)					\

@@ -667,8 +667,8 @@ looped_back:
 	return -1;
 
 unknown_rh:
-__IP6_INC_STATS(net, idev, IPSTATS_MIB_INHDRERRORS);
-DROPDUMP_QUEUE_SKB(skb, NET_DROPDUMP_IPSTATS_MIB_INHDRERRORS8);
+	__IP6_INC_STATS(net, idev, IPSTATS_MIB_INHDRERRORS);
+	DROPDUMP_QUEUE_SKB(skb, NET_DROPDUMP_IPSTATS_MIB_INHDRERRORS8);
 	icmpv6_param_prob(skb, ICMPV6_HDR_FIELD,
 			  (&hdr->type) - skb_network_header(skb));
 	return -1;

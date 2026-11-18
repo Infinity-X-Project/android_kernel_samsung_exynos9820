@@ -143,7 +143,7 @@ static int tcp_v6_pre_connect(struct sock *sk, struct sockaddr *uaddr,
 #ifndef CONFIG_MPTCP
 static
 #endif
-static int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
+int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 			  int addr_len)
 {
 	struct sockaddr_in6 *usin = (struct sockaddr_in6 *) uaddr;
