@@ -17,13 +17,17 @@
 #include <linux/syscalls.h>
 #include <linux/pagemap.h>
 #include <linux/compat.h>
-#ifdef CONFIG_KSU_SUSFS
-#include <linux/susfs_def.h>
-#include <linux/version.h>
-#endif
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
+extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+
 
 /**
  * generic_fillattr - Fill in the basic attributes from the inode struct
@@ -34,10 +38,6 @@
  * found on the VFS inode structure.  This is the default if no getattr inode
  * operation is supplied.
  */
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
-extern void susfs_generic_fillattr_spoofer(struct inode *inode, struct kstat *stat, u32 result_mask);
-#endif
 
 void generic_fillattr(struct inode *inode, struct kstat *stat)
 {
@@ -84,56 +84,53 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 	stat->result_mask |= STATX_BASIC_STATS;
 	request_mask &= STATX_ALL;
 	query_flags &= KSTAT_QUERY_FLAGS;
-	
-	#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	/* - SUS_KSTAT is effective for any app-uid process (uid % 100000 >= 10000),
-	 *   independent of whether the process was umounted. We only tag result_mask
-	 *   here; the actual spoofing happens after ->getattr()/generic_fillattr().
-	 * - Note: on 4.14 struct kstat has no mnt_id member and there is no STATX_MNT_ID,
-	 *   so the mnt_id spoofing that upstream does here is a no-op and omitted.
-	 */
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	if (susfs_is_current_app_uid()) {
 		bool is_fuse = false;
-		if (susfs_is_inode_sus_kstat(inode, &is_fuse)) {
-			if (!is_fuse)
+		if (susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse)) {
+			if (!is_fuse) {
+				// stat->mnt_id = real_mount(path->mnt)->mnt_id;
+				// only for 5.10 kernel
 				stat->result_mask |= STATX_SUS_KSTAT;
-			else
-				stat->result_mask |= STATX_SUS_KSTAT_FUSE;
+			}
+			// stat->mnt_id = real_mount(path->mnt)->mnt_id;
+			// only for 5.10 kernel
+			stat->result_mask |= STATX_SUS_KSTAT_FUSE;
 		}
 	}
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	
+
 	if (inode->i_op->getattr)
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	{
 		int err = inode->i_op->getattr(path, stat, request_mask,
 					    query_flags);
 		if (!err) {
-			if (stat->result_mask & STATX_SUS_KSTAT)
-				susfs_generic_fillattr_spoofer(inode, stat, STATX_SUS_KSTAT);
-			else if (stat->result_mask & STATX_SUS_KSTAT_FUSE)
-				susfs_generic_fillattr_spoofer(inode, stat, STATX_SUS_KSTAT_FUSE);
+			if (stat->result_mask & STATX_SUS_KSTAT) {
+				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
+				return err;
+			}
+			if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
+				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
+			return err;
+			}
 		}
-		/* never let our internal request marks leak to userspace (stx_mask) */
-		stat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);
 		return err;
 	}
 	if (stat->result_mask & STATX_SUS_KSTAT) {
 		generic_fillattr(inode, stat);
-		susfs_generic_fillattr_spoofer(inode, stat, STATX_SUS_KSTAT);
-		stat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);
+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
 		return 0;
 	}
 	if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
 		generic_fillattr(inode, stat);
-		susfs_generic_fillattr_spoofer(inode, stat, STATX_SUS_KSTAT_FUSE);
-		stat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);
+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
 		return 0;
 	}
 #else
 		return inode->i_op->getattr(path, stat, request_mask,
 					    query_flags);
-#endif
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	generic_fillattr(inode, stat);
 	return 0;
 }
@@ -408,7 +405,7 @@ SYSCALL_DEFINE2(newlstat, const char __user *, filename,
 	return cp_new_stat(&stat, statbuf);
 }
 
-#if defined(CONFIG_KSU)
+#if defined(CONFIG_KSU_MANUAL_HOOK)
 __attribute__((hot)) 
 extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
 				int *flags);
@@ -421,7 +418,7 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
-#if defined(CONFIG_KSU)
+#if defined(CONFIG_KSU_MANUAL_HOOK)
 	ksu_handle_stat(&dfd, &filename, &flag);
 #endif
 
@@ -440,7 +437,7 @@ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 	if (!error)
 		error = cp_new_stat(&stat, statbuf);
         
-        #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD)
+        #if defined(CONFIG_KSU_MANUAL_HOOK) && !defined(CONFIG_KSU_TRACEPOINT_HOOK)
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 	extern void ksu_handle_newfstat_ret(unsigned int *, struct stat __user **);
@@ -574,7 +571,7 @@ SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
 	if (!error)
 		error = cp_new_stat64(&stat, statbuf);
 
-        #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD) // for 32-bit
+        #if defined(CONFIG_KSU_MANUAL_HOOK) && !defined(CONFIG_KSU_TRACEPOINT_HOOK) // for 32-bit
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 	extern void ksu_handle_fstat64_ret(unsigned long *, struct stat64 __user **);
@@ -591,7 +588,7 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
-#if defined(CONFIG_KSU)
+#if defined(CONFIG_KSU_MANUAL_HOOK)
 	ksu_handle_stat(&dfd, &filename, &flag); 
 #endif
 

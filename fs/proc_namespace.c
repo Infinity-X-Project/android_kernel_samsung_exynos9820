@@ -20,11 +20,12 @@
 
 #include "pnode.h"
 #include "internal.h"
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
 extern bool susfs_is_current_ksu_domain(void);
+extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
 #endif
+
+
 
 static unsigned mounts_poll(struct file *file, poll_table *wait)
 {
@@ -246,9 +247,8 @@ static int show_vfsstat(struct seq_file *m, struct vfsmount *mnt)
 out:
 	return err;
 }
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	static int susfs_show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
+static int susfs_show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 {
 	struct proc_mounts *p = m->private;
 	struct mount *r = real_mount(mnt);
@@ -258,14 +258,15 @@ out:
 
 	if (r->mnt_id >= DEFAULT_KSU_MNT_ID)
 		return 0;
-       if (sb->s_op->show_devname) {
+
+	if (sb->s_op->show_devname) {
 		err = sb->s_op->show_devname(m, mnt_path.dentry);
 		if (err)
 			goto out;
 	} else {
 		mangle(m, r->mnt_devname ? r->mnt_devname : "none");
 	}
-        seq_putc(m, ' ');
+	seq_putc(m, ' ');
 	/* mountpoints outside of chroot jail will give SEQ_SKIP on this */
 	err = seq_path_root(m, &mnt_path, &p->root, " \t\n\\");
 	if (err)
@@ -277,7 +278,9 @@ out:
 	if (err)
 		goto out;
 	show_mnt_opts(m, mnt);
-	if (sb->s_op->show_options)
+	if (sb->s_op->show_options2)
+			err = sb->s_op->show_options2(mnt, m, mnt_path.dentry);
+	else if (sb->s_op->show_options)
 		err = sb->s_op->show_options(m, mnt_path.dentry);
 	seq_puts(m, " 0 0\n");
 out:
@@ -342,7 +345,9 @@ static int susfs_show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 	err = show_sb_opts(m, sb);
 	if (err)
 		goto out;
-	if (sb->s_op->show_options)
+	if (sb->s_op->show_options2) {
+		err = sb->s_op->show_options2(mnt, m, mnt->mnt_root);
+	} else if (sb->s_op->show_options)
 		err = sb->s_op->show_options(m, mnt->mnt_root);
 	seq_putc(m, '\n');
 out:
@@ -396,8 +401,9 @@ static int susfs_show_vfsstat(struct seq_file *m, struct vfsmount *mnt)
 out:
 	return err;
 }
-
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+
+
 
 static int mounts_open_common(struct inode *inode, struct file *file,
 			      int (*show)(struct seq_file *, struct vfsmount *))

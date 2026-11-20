@@ -23,6 +23,9 @@
 #include <linux/slab.h>
 #include <linux/filter.h>
 #include <linux/compiler.h>
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 #if defined(CONFIG_SEC_DEBUG)
 #include <linux/sec_debug.h>
 #endif
@@ -634,9 +637,6 @@ static void s_stop(struct seq_file *m, void *p)
 {
 }
 
-#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-extern bool susfs_starts_with(const char *str, const char *prefix);
-#endif
 
 
 static int s_show(struct seq_file *m, void *p)
@@ -661,6 +661,7 @@ static int s_show(struct seq_file *m, void *p)
 	} else
 
 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+
 		seq_printf(m, "%pK %c %s\n", (void *)iter->value,
 			   iter->type, iter->name);
 #else
@@ -684,7 +685,6 @@ static int s_show(struct seq_file *m, void *p)
 			susfs_starts_with(iter->name, "setenforce") ||
 			susfs_starts_with(iter->name, "is_zygote"))
 		{
-
 			return 0;
 		}
 		seq_printf(m, "%pK %c %s\n", (void *)iter->value,
