@@ -1,4 +1,4 @@
-[submodule "KernelSU-Next"]
-	path = KernelSU-Next
-	url = https://github.com/LeDrew2017/KernelSU-Next
-	branch = legacy-susfs-v2-sync
+[submodule "KazeSU"]
+	path = KernelSU
+	url = git@github.com:LeDrew2017/KazeSU.git
+	branch = legacy
