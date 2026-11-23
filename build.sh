@@ -7,7 +7,7 @@ KERNEL_DIR="$(pwd)"
 OUT_BASE="$KERNEL_DIR/out"
 AK3_DIR="$KERNEL_DIR/AnyKernel"
 AK3_REPO="https://github.com/Lordify97/Anykernel.git"
-TOOLCHAIN_DIR="/home/$USER/Android/ToolChain/ZyClang-23/"
+TOOLCHAIN_DIR="/home/jay/infinity/prebuilts/clang/host/linux-x86/clang-r584948b"
 GITHUB_REPO="git@github.com:LeDrew2017/FreeRunnerKernel.git"
 RELEASE_DIR="$KERNEL_DIR/releases"
 
@@ -49,25 +49,32 @@ print_section() {
     echo -e "\n--- $1 ---"
 }
 
-# Detect KernelSU version from KernelSU-Next's GitHub Releases
-detect_rissu_version() {
-    echo "🔍 Detecting KernelSU-Next version from GitHub..."
+# Label artifacts with the KazeSU revision actually present in this kernel.
+detect_kazesu_version() {
+    local driver_dir
+    local source_dir
+    local git_root
 
-    if ! command -v curl &> /dev/null; then
-        echo "❌ ERROR: curl is required for version detection"
-        exit 1
+    driver_dir=$(readlink -f "$KERNEL_DIR/drivers/kernelsu")
+    if [ ! -f "$driver_dir/Kconfig" ]; then
+        echo "❌ ERROR: KazeSU is not integrated. Run its legacy setup script first."
+        return 1
     fi
-
-    local latest_release=$(curl -s "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
-
-    if [[ -n "$latest_release" ]]; then
-        KSU_VERSION="$latest_release"
-        echo "✅ KernelSU-Next version: $KSU_VERSION"
-        return 0
-    else
-        echo "❌ ERROR: Could not detect KernelSU-Next version from GitHub releases"
-        exit 1
+    source_dir=$(dirname "$driver_dir")
+    git_root=$(git -C "$source_dir" rev-parse --show-toplevel 2>/dev/null) || {
+        echo "❌ ERROR: Cannot read the KazeSU checkout's Git metadata."
+        return 1
+    }
+    if [ "$git_root" != "$source_dir" ]; then
+        echo "❌ ERROR: drivers/kernelsu must point to a separate KazeSU checkout."
+        return 1
     fi
+    if ! grep -q '^config KSU_SUSFS_DEINLINE$' "$driver_dir/Kconfig"; then
+        echo "❌ ERROR: This non-GKI tree requires the updated KazeSU legacy source."
+        return 1
+    fi
+    KSU_VERSION=$(git -C "$source_dir" describe --tags --always --dirty)
+    echo "✅ KazeSU version: $KSU_VERSION"
 }
 
 build_device() {
@@ -80,7 +87,7 @@ build_device() {
 
     echo -e "\n🔧 Starting build for: $device"
 
-    make -C "$KERNEL_DIR" O="$out_dir" "$defconfig" LLVM=1
+    make -C "$KERNEL_DIR" O="$out_dir" "$defconfig" LLVM=1 CC="$CC"
 
     # Merge NetHunter config fragment on top of defconfig, overriding any conflicts
     if [ "$USE_NETHUNTER" = true ]; then
@@ -93,10 +100,20 @@ build_device() {
         echo "✅ NetHunter config merged."
     fi
 
-    make -C "$KERNEL_DIR" O="$out_dir" olddefconfig LLVM=1
+    # Apply the selected root mode after fragments so stock artifacts contain no KSU.
+    if [ "$USE_KSU" = true ]; then
+        "$KERNEL_DIR/scripts/config" --file "$out_dir/.config" \
+            --enable KSU --enable KSU_MANUAL_HOOK \
+            --disable KSU_TRACEPOINT_HOOK --disable KSU_TAMPER_SYSCALL_TABLE \
+            --disable KSU_SUSFS_INLINE_HOOK
+    else
+        "$KERNEL_DIR/scripts/config" --file "$out_dir/.config" --disable KSU
+    fi
+
+    make -C "$KERNEL_DIR" O="$out_dir" olddefconfig LLVM=1 CC="$CC"
 
     local build_start=$(date +%s)
-    make -C "$KERNEL_DIR" O="$out_dir" -j"$(nproc)" LLVM=1
+    make -C "$KERNEL_DIR" O="$out_dir" -j"$(nproc)" LLVM=1 CC="$CC"
     local build_end=$(date +%s)
     local duration=$((build_end - build_start))
 
@@ -125,9 +142,9 @@ package_kernel() {
 
     local version_suffix=""
 
-    # Add KernelSU-Next version to suffix if enabled
+    # Add KazeSU version to suffix if enabled
     if [ "$USE_KSU" = true ] && [[ -n "$KSU_VERSION" ]]; then
-        version_suffix="-KernelSU-Next-${KSU_VERSION}"
+        version_suffix="-KazeSU-${KSU_VERSION}"
     fi
 
     # Add NetHunter to suffix if enabled
@@ -159,9 +176,9 @@ build_selected_devices() {
 
     local release_subdir="$RELEASE_DIR"
     if [ "$USE_KSU" = true ] && [ "$USE_NETHUNTER" = true ]; then
-        release_subdir="$RELEASE_DIR/ksu-nethunter"
+        release_subdir="$RELEASE_DIR/kazesu-nethunter"
     elif [ "$USE_KSU" = true ]; then
-        release_subdir="$RELEASE_DIR/ksu"
+        release_subdir="$RELEASE_DIR/kazesu"
     elif [ "$USE_NETHUNTER" = true ]; then
         release_subdir="$RELEASE_DIR/nethunter"
     else
@@ -210,7 +227,7 @@ create_github_release() {
     echo "Select which builds to release:"
     echo "  1) All builds in releases folder"
     echo "  2) Only Stock builds (releases/stock)"
-    echo "  3) Only KernelSU builds (releases/ksu)"
+    echo "  3) Only KazeSU builds (releases/kazesu)"
     read -p "Select option (1-3) [default: 1]: " release_choice
 
     local zip_files=()
@@ -226,13 +243,13 @@ create_github_release() {
             fi
             ;;
         3)
-            if [ -d "$RELEASE_DIR/ksu" ]; then
+            if [ -d "$RELEASE_DIR/kazesu" ]; then
                 while IFS= read -r -d '' file; do
                     zip_files+=("$file")
-                done < <(find "$RELEASE_DIR/ksu" -name "*.zip" -print0)
-                echo "✔ Selected: KernelSU builds only"
+                done < <(find "$RELEASE_DIR/kazesu" -name "*.zip" -print0)
+                echo "✔ Selected: KazeSU builds only"
             else
-                echo "⚠️ KernelSU folder not found."
+                echo "⚠️ KazeSU folder not found."
             fi
             ;;
         1|"")
@@ -287,8 +304,8 @@ get_build_type_selection() {
     print_section "Build Type Selection"
     echo "Build options:"
     echo "  1) Stock"
-    echo "  2) KernelSU-Next"
-    echo "  3) KernelSU-Next + NetHunter"
+    echo "  2) KazeSU"
+    echo "  3) KazeSU + NetHunter"
     read -p "Select option (1-3) [default: 1]: " build_choice
 
     build_choice=${build_choice:-1}
@@ -300,22 +317,22 @@ get_build_type_selection() {
             USE_NETHUNTER=false
             ;;
         2)
-            echo "✔ Selected: KernelSU-Next kernel"
+            echo "✔ Selected: KazeSU kernel"
             USE_KSU=true
             USE_NETHUNTER=false
-            detect_rissu_version
-            echo "📌 KernelSU-Next Version: $KSU_VERSION"
+            detect_kazesu_version
+            echo "📌 KazeSU Version: $KSU_VERSION"
             ;;
         3)
-            echo "✔ Selected: KernelSU-Next + NetHunter kernel"
+            echo "✔ Selected: KazeSU + NetHunter kernel"
             USE_KSU=true
             USE_NETHUNTER=true
             if [ ! -f "$NETHUNTER_CONFIG" ]; then
                 echo "❌ ERROR: nethunter.config not found at $NETHUNTER_CONFIG"
                 exit 1
             fi
-            detect_rissu_version
-            echo "📌 KernelSU-Next Version: $KSU_VERSION"
+            detect_kazesu_version
+            echo "📌 KazeSU Version: $KSU_VERSION"
             ;;
         *)
             echo "❌ Invalid selection. Using stock kernel."
@@ -381,12 +398,20 @@ main() {
         exit 0
     fi
 
-    for cmd in git zip gh; do
+    if [ ! -x "$TOOLCHAIN_DIR/bin/clang" ]; then
+        echo "❌ ERROR: Infinity prebuilt Clang not found at $TOOLCHAIN_DIR/bin/clang"
+        exit 1
+    fi
+
+    for cmd in git zip gh clang clang++; do
         if ! command -v "$cmd" &> /dev/null; then
             echo "❌ $cmd is not installed. Please install it to continue."
             exit 1
         fi
     done
+
+    echo "🔧 Using Infinity prebuilt Clang: $(command -v clang)"
+    clang --version
 
     if [ ! -d "$AK3_DIR" ]; then
         echo "AnyKernel directory not found. Cloning from repository..."
