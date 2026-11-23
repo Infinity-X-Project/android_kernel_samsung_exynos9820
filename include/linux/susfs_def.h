@@ -35,7 +35,7 @@
 #define CMD_SUSFS_ADD_SUS_KSTAT 0x55570
 #define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55571
 #define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x55572
-#define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580 /* Kazesu legacy extension */
+#define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580 /* deprecated */
 #define CMD_SUSFS_SET_UNAME 0x55590
 #define CMD_SUSFS_ENABLE_LOG 0x555a0
 #define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x555b0
@@ -49,8 +49,6 @@
 #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60010
 #define CMD_SUSFS_ADD_SUS_MAP 0x60020
 #define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030
-#define CMD_SUSFS_ADD_SUS_MEMFD 0x60040 /* Kazesu extension: do not alias priority filtering */
-#define SUSFS_KAZESU_LEGACY_EXTENSIONS 1
 
 #define SUSFS_MAX_LEN_PATHNAME 256 // 256 should address many paths already unless you are doing some strange experimental stuff, then set your own desired length
 #define SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE 8192 // 8192 is enough I guess

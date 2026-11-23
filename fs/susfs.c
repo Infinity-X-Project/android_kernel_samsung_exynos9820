@@ -79,6 +79,8 @@ DEFINE_STATIC_KEY_TRUE(susfs_is_log_enabled);
 #else
 #define SUSFS_LOGI(fmt, ...)
 #define SUSFS_LOGE(fmt, ...)
+#define SUSFS_LOGI_RL(fmt, ...)
+#define SUSFS_LOGE_RL(fmt, ...)
 #endif
 
 /* selinux hide */
@@ -416,7 +418,7 @@ __attribute__((hot)) bool susfs_is_inode_sus_path(struct inode *inode)
 			return false;
 		}
 
-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags) &&
+		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_state) &&
 			likely(!susfs_is_uid_allowed_for_sus_path(uid))))
 		{
 			//SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
@@ -425,7 +427,7 @@ __attribute__((hot)) bool susfs_is_inode_sus_path(struct inode *inode)
 		return false;
 	}
 
-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags) &&
+	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_state) &&
 		likely(!susfs_is_uid_allowed_for_sus_path(uid))))
 	{
 		//SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
@@ -2380,21 +2382,6 @@ void susfs_get_enabled_features(void __user **user_info) {
 	buf_ptr = info->enabled_features + copied_size;
 #endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 
-
-#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-    info->err = copy_config_to_buf("CONFIG_KSU_SUSFS_TRY_UMOUNT\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
-    if (info->err) goto out_copy_to_user;
-    buf_ptr = info->enabled_features + copied_size;
-#endif
-#ifdef CONFIG_KSU_SUSFS_SUS_MEMFD
-    info->err = copy_config_to_buf("CONFIG_KSU_SUSFS_SUS_MEMFD\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
-    if (info->err) goto out_copy_to_user;
-    buf_ptr = info->enabled_features + copied_size;
-#endif
-    info->err = copy_config_to_buf("SUSFS_KAZESU_LEGACY_EXTENSIONS\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
-    if (info->err) goto out_copy_to_user;
-    buf_ptr = info->enabled_features + copied_size;
-
 	info->err = 0;
 out_copy_to_user:
 	if (copy_to_user((struct st_susfs_enabled_features __user*)*user_info, info, sizeof(struct st_susfs_enabled_features))) {
@@ -2655,129 +2642,7 @@ void susfs_init(void) {\
 /* No module exit is needed becuase it should never be a loadable kernel module */
 //void __init susfs_exit(void)
 
-
-/* Kazesu SUSFS 2.4 extensions, adapted from the kernel's SUSFS 2.3 implementation.
- * Keep the legacy unmount-list ABI; memfd uses 0x60040 so 2.4's priority UID
- * filter keeps 0x60030. KernelSU root handling remains in the manual hooks.
- */
-#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-static DEFINE_MUTEX(susfs_mutex_lock_try_umount);
-static LIST_HEAD(LH_TRY_UMOUNT_PATH);
-extern void try_umount(const char *mnt, int flags);
-
-void susfs_add_try_umount(void __user **user_info)
-{
-    struct st_susfs_try_umount info = {0};
-    struct st_susfs_try_umount_list *entry;
-
-    if (copy_from_user(&info, *user_info, sizeof(info))) {
-        info.err = -EFAULT;
-        goto out;
-    }
-    if (!info.target_pathname[0] || info.target_pathname[0] != '/' ||
-        strnlen(info.target_pathname, sizeof(info.target_pathname)) == sizeof(info.target_pathname)) {
-        info.err = -EINVAL;
-        goto out;
-    }
-    if (info.mnt_mode == TRY_UMOUNT_DEFAULT)
-        info.mnt_mode = 0;
-    else if (info.mnt_mode == TRY_UMOUNT_DETACH)
-        info.mnt_mode = MNT_DETACH;
-    else {
-        info.err = -EINVAL;
-        goto out;
-    }
-    entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-    if (!entry) {
-        info.err = -ENOMEM;
-        goto out;
-    }
-    entry->info = info;
-    mutex_lock(&susfs_mutex_lock_try_umount);
-    list_add_tail(&entry->list, &LH_TRY_UMOUNT_PATH);
-    mutex_unlock(&susfs_mutex_lock_try_umount);
-    info.err = 0;
-out:
-    if (copy_to_user(&((struct st_susfs_try_umount __user *)*user_info)->err, &info.err, sizeof(info.err)))
-        info.err = -EFAULT;
-    SUSFS_LOGI("CMD_SUSFS_ADD_TRY_UMOUNT -> ret: %d\n", info.err);
+/* Parent-kernel helper used by the fs/readdir.c sus_path hooks. */
+int susfs_get_data_path(struct path *path) {
+	return kern_path("/data", LOOKUP_FOLLOW, path);
 }
-
-void susfs_try_umount(uid_t uid)
-{
-    struct st_susfs_try_umount_list *entry;
-    const struct cred *saved;
-
-    if (!ksu_cred)
-        return;
-    saved = override_creds(ksu_cred);
-    /* Match legacy order, and serialize readers with concurrent registrations. */
-    mutex_lock(&susfs_mutex_lock_try_umount);
-    list_for_each_entry_reverse(entry, &LH_TRY_UMOUNT_PATH, list) {
-        SUSFS_LOGI("umounting '%s' for uid: %u\n", entry->info.target_pathname, uid);
-        try_umount(entry->info.target_pathname, entry->info.mnt_mode);
-    }
-    mutex_unlock(&susfs_mutex_lock_try_umount);
-    revert_creds(saved);
-}
-#endif
-
-#ifdef CONFIG_KSU_SUSFS_SUS_MEMFD
-static DEFINE_MUTEX(susfs_mutex_lock_sus_memfd);
-static LIST_HEAD(LH_SUS_MEMFD);
-
-int susfs_add_sus_memfd(void __user **user_info)
-{
-    struct st_susfs_sus_memfd info = {0};
-    struct st_susfs_sus_memfd_list *entry, *cursor;
-
-    if (copy_from_user(&info, *user_info, sizeof(info))) {
-        info.err = -EFAULT;
-        goto out;
-    }
-    if (!info.target_pathname[0] ||
-        strnlen(info.target_pathname, sizeof(info.target_pathname)) == sizeof(info.target_pathname)) {
-        info.err = -EINVAL;
-        goto out;
-    }
-    entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-    if (!entry) {
-        info.err = -ENOMEM;
-        goto out;
-    }
-    entry->info = info;
-    mutex_lock(&susfs_mutex_lock_sus_memfd);
-    list_for_each_entry(cursor, &LH_SUS_MEMFD, list) {
-        if (!strcmp(info.target_pathname, cursor->info.target_pathname)) {
-            mutex_unlock(&susfs_mutex_lock_sus_memfd);
-            kfree(entry);
-            info.err = -EEXIST;
-            goto out;
-        }
-    }
-    list_add_tail(&entry->list, &LH_SUS_MEMFD);
-    mutex_unlock(&susfs_mutex_lock_sus_memfd);
-    info.err = 0;
-out:
-    if (copy_to_user(&((struct st_susfs_sus_memfd __user *)*user_info)->err, &info.err, sizeof(info.err)))
-        info.err = -EFAULT;
-    SUSFS_LOGI("CMD_SUSFS_ADD_SUS_MEMFD -> ret: %d\n", info.err);
-    return info.err;
-}
-
-int susfs_sus_memfd(char *memfd_name)
-{
-    struct st_susfs_sus_memfd_list *entry;
-    int blocked = 0;
-
-    mutex_lock(&susfs_mutex_lock_sus_memfd);
-    list_for_each_entry(entry, &LH_SUS_MEMFD, list) {
-        if (!strcmp(memfd_name, entry->info.target_pathname)) {
-            blocked = 1;
-            break;
-        }
-    }
-    mutex_unlock(&susfs_mutex_lock_sus_memfd);
-    return blocked;
-}
-#endif

@@ -9,6 +9,13 @@
 #include <linux/susfs_def.h>
 #include <linux/statfs.h>
 
+#ifndef getname_safe
+#define getname_safe(name) (name == NULL ? ERR_PTR(-EINVAL) : getname(name))
+#endif
+#ifndef putname_safe
+#define putname_safe(name) (IS_ERR(name) ? NULL : putname(name))
+#endif
+
 #define SUSFS_VERSION "v2.4.0"
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
 #define SUSFS_VARIANT "NON-GKI"
@@ -254,34 +261,6 @@ void susfs_show_variant(void __user **user_info);
 void susfs_show_version(void __user **user_info);
 
 void susfs_start_sdcard_monitor_fn(void);
-
-
-/* Legacy feature ABI restored for Kazesu's de-inlined integration. */
-#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-struct st_susfs_try_umount {
-    char target_pathname[SUSFS_MAX_LEN_PATHNAME];
-    int mnt_mode;
-    int err;
-};
-struct st_susfs_try_umount_list {
-    struct list_head list;
-    struct st_susfs_try_umount info;
-};
-void susfs_add_try_umount(void __user **user_info);
-void susfs_try_umount(uid_t uid);
-#endif
-#ifdef CONFIG_KSU_SUSFS_SUS_MEMFD
-struct st_susfs_sus_memfd {
-    char target_pathname[SUSFS_MAX_LEN_PATHNAME];
-    int err;
-};
-struct st_susfs_sus_memfd_list {
-    struct list_head list;
-    struct st_susfs_sus_memfd info;
-};
-int susfs_add_sus_memfd(void __user **user_info);
-int susfs_sus_memfd(char *memfd_name);
-#endif
 
 /* susfs_init */
 void susfs_init(void);

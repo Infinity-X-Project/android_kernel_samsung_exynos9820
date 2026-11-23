@@ -1698,7 +1698,10 @@ bypass_orig_flow:
 	return mnt;
 
  out_free:
-	mnt_free_id(mnt);
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (!is_mnt_ksu_unshared)
+#endif
+		mnt_free_id(mnt);
 	free_vfsmnt(mnt);
 	return ERR_PTR(err);
 }

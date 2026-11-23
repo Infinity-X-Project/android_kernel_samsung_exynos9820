@@ -297,8 +297,9 @@ static DEFINE_MUTEX(reboot_mutex);
  * reboot doesn't sync: do that yourself before calling this.
  */
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
-extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#include <linux/susfs_ksu.h>
 #endif
 
 SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
@@ -308,8 +309,11 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	char buffer[256];
 	int ret = 0;
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
-	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+#ifdef CONFIG_KSU_SUSFS
+	/* SUSFS inline hook: KernelSU and SUSFS commands. */
+	if (system_state == SYSTEM_RUNNING &&
+	    (u32)magic1 == SUSFS_KSU_INSTALL_MAGIC1)
+		return ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
 #endif
 
 	/* We only trust the superuser with rebooting the system. */

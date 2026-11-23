@@ -22,7 +22,16 @@
 #include <asm/unistd.h>
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
+#include "mount.h"
+#endif
+#ifdef CONFIG_KSU_SUSFS
+extern struct static_key_true ksu_is_init_rc_hook_enabled;
+extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);
+extern struct static_key_true ksu_su_compat_enabled;
+extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+extern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
 #endif // #ifdef CONFIG_KSU_SUSFS
+
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
 extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);
@@ -79,6 +88,10 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 		      u32 request_mask, unsigned int query_flags)
 {
 	struct inode *inode = d_backing_inode(path->dentry);
+	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	u32 susfs_mask = 0;
+#endif
 
 	memset(stat, 0, sizeof(*stat));
 	stat->result_mask |= STATX_BASIC_STATS;
@@ -88,50 +101,23 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 	if (susfs_is_current_app_uid()) {
 		bool is_fuse = false;
 		if (susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse)) {
-			if (!is_fuse) {
-				// stat->mnt_id = real_mount(path->mnt)->mnt_id;
-				// only for 5.10 kernel
-				stat->result_mask |= STATX_SUS_KSTAT;
-			}
-			// stat->mnt_id = real_mount(path->mnt)->mnt_id;
-			// only for 5.10 kernel
-			stat->result_mask |= STATX_SUS_KSTAT_FUSE;
+			susfs_mask = is_fuse ? STATX_SUS_KSTAT_FUSE : STATX_SUS_KSTAT;
 		}
 	}
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 
-	if (inode->i_op->getattr)
+	if (inode->i_op->getattr) {
+		error = inode->i_op->getattr(path, stat, request_mask, query_flags);
+		if (error)
+			return error;
+	} else {
+		generic_fillattr(inode, stat);
+	}
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	{
-		int err = inode->i_op->getattr(path, stat, request_mask,
-					    query_flags);
-		if (!err) {
-			if (stat->result_mask & STATX_SUS_KSTAT) {
-				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
-				return err;
-			}
-			if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
-				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
-			return err;
-			}
-		}
-		return err;
-	}
-	if (stat->result_mask & STATX_SUS_KSTAT) {
-		generic_fillattr(inode, stat);
-		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
-		return 0;
-	}
-	if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
-		generic_fillattr(inode, stat);
-		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
-		return 0;
-	}
-#else
-		return inode->i_op->getattr(path, stat, request_mask,
-					    query_flags);
+	/* Keep SUSFS routing flags private, including on FD-based getattr paths. */
+	if (susfs_mask)
+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, susfs_mask);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	generic_fillattr(inode, stat);
 	return 0;
 }
 EXPORT_SYMBOL(vfs_getattr_nosec);
@@ -194,6 +180,11 @@ int vfs_statx_fd(unsigned int fd, struct kstat *stat,
 	if (f.file) {
 		error = vfs_getattr(&f.file->f_path, stat,
 				    request_mask, query_flags);
+#ifdef CONFIG_KSU_SUSFS
+		if (!error && static_branch_unlikely(&ksu_is_init_rc_hook_enabled))
+			ksu_handle_vfs_fstat(fd, &stat->size);
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 		fdput(f);
 	}
 	return error;
@@ -221,6 +212,12 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
+#ifdef CONFIG_KSU_SUSFS
+	struct filename *fname = NULL;
+	extern int filename_lookup(int dfd, struct filename *name, unsigned flags,
+					struct path *path, struct path *root);
+#endif
+
 
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
@@ -234,7 +231,23 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 		lookup_flags |= LOOKUP_EMPTY;
 
 retry:
+#ifdef CONFIG_KSU_SUSFS
+	fname = getname_flags(filename, lookup_flags, NULL);
+
+	if (likely(susfs_is_current_proc_no_su()))
+		goto orig_flow;
+
+	if (static_branch_likely(&ksu_su_compat_enabled)) {
+		if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
+			ksu_handle_stat(&dfd, &fname, &flags);
+	}
+
+orig_flow:
+	error = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
+	// no putname(fname) here as filename_lookup() has it done for us already;
+#else
 	error = user_path_at(dfd, filename, lookup_flags, &path);
+#endif
 	if (error)
 		goto out;
 
@@ -405,22 +418,12 @@ SYSCALL_DEFINE2(newlstat, const char __user *, filename,
 	return cp_new_stat(&stat, statbuf);
 }
 
-#if defined(CONFIG_KSU_MANUAL_HOOK)
-__attribute__((hot)) 
-extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
-				int *flags);
-#endif
-
 #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
 SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 		struct stat __user *, statbuf, int, flag)
 {
 	struct kstat stat;
 	int error;
-
-#if defined(CONFIG_KSU_MANUAL_HOOK)
-	ksu_handle_stat(&dfd, &filename, &flag);
-#endif
 
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
@@ -436,14 +439,6 @@ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 
 	if (!error)
 		error = cp_new_stat(&stat, statbuf);
-        
-        #if defined(CONFIG_KSU_MANUAL_HOOK) && !defined(CONFIG_KSU_TRACEPOINT_HOOK)
-        #pragma GCC diagnostic push
-        #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
-	extern void ksu_handle_newfstat_ret(unsigned int *, struct stat __user **);
-	ksu_handle_newfstat_ret(&fd, &statbuf);
-        #pragma GCC diagnostic pop
-        #endif
         
 	return error;
 }
@@ -571,14 +566,6 @@ SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
 	if (!error)
 		error = cp_new_stat64(&stat, statbuf);
 
-        #if defined(CONFIG_KSU_MANUAL_HOOK) && !defined(CONFIG_KSU_TRACEPOINT_HOOK) // for 32-bit
-        #pragma GCC diagnostic push
-        #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
-	extern void ksu_handle_fstat64_ret(unsigned long *, struct stat64 __user **);
-	ksu_handle_fstat64_ret(&fd, &statbuf);
-        #pragma GCC diagnostic pop
-        #endif
-        
 	return error;
 }
 
@@ -587,10 +574,6 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 {
 	struct kstat stat;
 	int error;
-
-#if defined(CONFIG_KSU_MANUAL_HOOK)
-	ksu_handle_stat(&dfd, &filename, &flag); 
-#endif
 
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)

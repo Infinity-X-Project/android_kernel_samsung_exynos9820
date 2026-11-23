@@ -63,6 +63,9 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 #include <linux/vmalloc.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 #include <linux/task_integrity.h>
 
 #include <linux/uaccess.h>
@@ -2012,6 +2015,16 @@ static int exec_binprm(struct linux_binprm *bprm)
 /*
  * sys_execve() executes a new program.
  */
+#ifdef CONFIG_KSU_SUSFS
+extern struct static_key_true ksu_su_compat_enabled;
+extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+				void *envp, int *flags);
+extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags, int *retval);
+#endif
 static int __do_execve_file(int fd, struct filename *filename,
 			    struct user_arg_ptr argv,
 			    struct user_arg_ptr envp,
@@ -2022,8 +2035,26 @@ static int __do_execve_file(int fd, struct filename *filename,
 	struct files_struct *displaced;
 	int retval;
 
+#ifdef CONFIG_KSU_SUSFS
+	bool is_su_session = false;
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
+	pathbuf = NULL;
+	bprm = NULL;
+	displaced = NULL;
+#ifdef CONFIG_KSU_SUSFS
+	if (!filename || likely(susfs_is_current_proc_no_su()))
+		goto orig_flow;
+	if (static_branch_likely(&ksu_su_compat_enabled)) {
+		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted))
+			is_su_session = !ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+		else
+			is_su_session = !ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+	}
+orig_flow:
+#endif
 	
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
@@ -2149,6 +2180,11 @@ static int __do_execve_file(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
+#ifdef CONFIG_KSU_SUSFS
+	if (unlikely(is_su_session))
+		(void)ksu_handle_post_execveat_sucompat(&fd, &filename, &argv, &envp, &flags, &retval);
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 	/* execve succeeded */
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
@@ -2173,6 +2209,7 @@ out_unmark:
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 
+
 out_free:
 	free_bprm(bprm);
 	kfree(pathbuf);
@@ -2186,20 +2223,11 @@ out_ret:
 	return retval;
 }
 
-#if defined(CONFIG_KSU_MANUAL_HOOK)
-__attribute__((hot))
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
-void *argv, void *envp, int *flags);
-#endif
-
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
-#ifdef CONFIG_KSU_MANUAL_HOOK
-	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-#endif
 	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 }
 
@@ -2210,7 +2238,6 @@ int do_execve_file(struct file *file, void *__argv, void *__envp)
 
 	return __do_execve_file(AT_FDCWD, NULL, argv, envp, 0, file);
 }
-
 int do_execve(struct filename *filename,
 	const char __user *const __user *__argv,
 	const char __user *const __user *__envp)
